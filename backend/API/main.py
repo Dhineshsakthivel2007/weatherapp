@@ -1,12 +1,11 @@
 from fastapi import FastAPI
-from backend.storage.db import db_connection
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.ingestion.fetch_weather import fetch_data
 from backend.processing.clean_transform import data_forming
-from backend.storage.insert_data import insert_weather
-from MLmodel.model.predict import predict
-import psycopg2
-app=FastAPI()
+
+app = FastAPI()
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,94 +13,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
 @app.get("/")
 def home():
-    return "weather api running use /weather to see the datas"
-# @app.get("/weather")
-# def get_weather():
-#     with db_connection() as conn:
-#         with conn.cursor() as cursor:
-#             cursor.execute("SELECT * FROM weather_data")
-#             data=cursor.fetchall()
-#     return data
-@app.get("/weather/{city}")
-def get_weather_city(city:str):
-    city=city.strip().lower()
-    with db_connection() as conn:
-        with conn.cursor() as cursor:
-            query=("SELECT * FROM weather_data WHERE LOWER(TRIM(city)) = %s AND collected_at >= NOW() - INTERVAL '6 hours' ORDER BY collected_at ASC")
-            cursor.execute(query,(city,))
-            rows=cursor.fetchall()
-            columns = [desc[0] for desc in cursor.description]
-            if rows:
-                data = [dict(zip(columns, row)) for row in rows]
-                return {"source": "db", "data": data}
-            else:
-                raw_data=fetch_data(city.lower())
-                if raw_data is not None:
-                    df=data_forming(raw_data)
-                    data=insert_weather(df)
-                    return {"source":"apifetch","data":df.to_dict(orient="records")}
-                else:
-                    return {"check the city name"}
-import pandas as pd
+    return {"message": "Weather API is running. Use /weather/{city}"}
 
-@app.get("/predict/{city}")
-def predict_city(city: str, hours_ahead: int = 0):
+
+@app.get("/weather/{city}")
+def get_weather_city(city: str):
+
     city = city.strip().lower()
 
-    with db_connection() as conn:
-        query = """
-        SELECT * FROM weather_data
-        WHERE LOWER(TRIM(city)) = %s
-        ORDER BY collected_at DESC
-        LIMIT 1
-        """
-        df = pd.read_sql(query, conn, params=(city,))
+    # 1. Fetch directly from weather API
+    raw_data = fetch_data(city)
 
-    source = "db"
+    if raw_data is None:
+        return {
+            "error": "Unable to fetch weather data. Check the city name or API key."
+        }
 
-    if df.empty:
-        raw_data = fetch_data(city)
+    # 2. Clean and transform API data
+    df = data_forming(raw_data)
 
-        if raw_data is None:
-            return {"error": "City not found"}
-
-        df = data_forming(raw_data)
-        insert_weather(df)
-
-        source = "api"
-
-    # 🔥 FUTURE TIME LOGIC
-    df["collected_at"] = pd.to_datetime(df["collected_at"])
-    base_time = df["collected_at"].iloc[0]
-
-    future_time = base_time + pd.Timedelta(hours=hours_ahead)
-
-    df["hour"] = future_time.hour
-    df["day"] = future_time.day
-    df["month"] = future_time.month
-
-    features = [
-        "latitude",
-        "longitude",
-        "humidity",
-        "pressure",
-        "wind_speed",
-        "wind_deg",
-        "hour",
-        "day",
-        "month"
-    ]
-
-    input_data = df[features].iloc[0].to_dict()
-
-    result = predict(input_data)
-
+    # 3. Return processed weather data
     return {
+        "source": "weather_api",
         "city": city,
-        "hours_ahead": hours_ahead,
-        "predicted_temperature": result,
-        "prediction_time": str(future_time),
-        "source": source
+        "data": df.to_dict(orient="records")
     }

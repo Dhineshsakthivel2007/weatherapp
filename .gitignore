@@ -1,8 +1,3 @@
-# Airflow
-airflow/logs/
-airflow/*.db
-airflow/scheduler/
-airflow/dag_processor_manager/
 
 # Python
 __pycache__/
@@ -13,3 +8,4 @@ __pycache__/
 
 # OS
 .DS_Store
+.weather
